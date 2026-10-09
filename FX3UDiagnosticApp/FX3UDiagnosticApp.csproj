@@ -1,0 +1,348 @@
+using System;
+using System.IO.Ports;
+using System.Text;
+using System.Windows.Forms;
+
+namespace FX3UDiagnosticApp
+{
+    public class MainForm : Form
+    {
+        private readonly ComboBox _portComboBox;
+        private readonly ComboBox _baudComboBox;
+        private readonly ComboBox _parityComboBox;
+        private readonly ComboBox _dataBitsComboBox;
+        private readonly ComboBox _stopBitsComboBox;
+        private readonly CheckBox _dtrCheckBox;
+        private readonly CheckBox _rtsCheckBox;
+        private readonly Button _refreshButton;
+        private readonly Button _connectButton;
+        private readonly Button _sendButton;
+        private readonly Button _clearButton;
+        private readonly Button _exampleCommandButton;
+        private readonly RichTextBox _logBox;
+        private readonly TextBox _commandTextBox;
+        private readonly RadioButton _textModeRadio;
+        private readonly RadioButton _hexModeRadio;
+        private readonly Label _statusLabel;
+        private readonly SerialPort _serialPort;
+
+        public MainForm()
+        {
+            Text = "Mitsubishi FX3U RS-232 Diagnostic Tool";
+            Width = 980;
+            Height = 680;
+            StartPosition = FormStartPosition.CenterScreen;
+            FormBorderStyle = FormBorderStyle.FixedSingle;
+            MaximizeBox = false;
+
+            _serialPort = new SerialPort();
+            _serialPort.DataReceived += SerialPort_DataReceived;
+
+            _statusLabel = new Label
+            {
+                Text = "Disconnected",
+                AutoSize = true,
+                ForeColor = System.Drawing.Color.DarkRed,
+                Font = new System.Drawing.Font("Segoe UI", 10F, System.Drawing.FontStyle.Bold),
+                Location = new System.Drawing.Point(20, 20)
+            };
+
+            var configPanel = new GroupBox
+            {
+                Text = "Serial Configuration",
+                Width = 900,
+                Height = 150,
+                Location = new System.Drawing.Point(20, 50)
+            };
+
+            var portLabel = new Label { Text = "Port:", Location = new System.Drawing.Point(20, 30), AutoSize = true };
+            _portComboBox = new ComboBox { Width = 120, Location = new System.Drawing.Point(90, 24) };
+            _refreshButton = new Button { Text = "Refresh", Width = 100, Location = new System.Drawing.Point(220, 20) };
+            _refreshButton.Click += (_, _) => LoadSerialPorts();
+
+            var baudLabel = new Label { Text = "Baud:", Location = new System.Drawing.Point(340, 30), AutoSize = true };
+            _baudComboBox = new ComboBox { Width = 120, Location = new System.Drawing.Point(400, 24) };
+            _baudComboBox.Items.AddRange(new object[] { 9600, 19200, 38400, 57600, 115200, 230400 });
+            _baudComboBox.SelectedIndex = 0;
+
+            var parityLabel = new Label { Text = "Parity:", Location = new System.Drawing.Point(540, 30), AutoSize = true };
+            _parityComboBox = new ComboBox { Width = 120, Location = new System.Drawing.Point(600, 24) };
+            _parityComboBox.Items.AddRange(Enum.GetNames(typeof(Parity)));
+            _parityComboBox.SelectedItem = Parity.None.ToString();
+
+            var dataBitsLabel = new Label { Text = "Data bits:", Location = new System.Drawing.Point(20, 70), AutoSize = true };
+            _dataBitsComboBox = new ComboBox { Width = 120, Location = new System.Drawing.Point(90, 64) };
+            _dataBitsComboBox.Items.AddRange(new object[] { 7, 8 } );
+            _dataBitsComboBox.SelectedIndex = 1;
+
+            var stopBitsLabel = new Label { Text = "Stop bits:", Location = new System.Drawing.Point(340, 70), AutoSize = true };
+            _stopBitsComboBox = new ComboBox { Width = 120, Location = new System.Drawing.Point(400, 64) };
+            _stopBitsComboBox.Items.AddRange(Enum.GetNames(typeof(StopBits)));
+            _stopBitsComboBox.SelectedItem = StopBits.One.ToString();
+
+            _dtrCheckBox = new CheckBox { Text = "DTR", Location = new System.Drawing.Point(560, 66), AutoSize = true };
+            _rtsCheckBox = new CheckBox { Text = "RTS", Location = new System.Drawing.Point(620, 66), AutoSize = true };
+
+            _connectButton = new Button { Text = "Connect", Width = 140, Location = new System.Drawing.Point(740, 20) };
+            _connectButton.Click += ConnectButton_Click;
+
+            configPanel.Controls.Add(portLabel);
+            configPanel.Controls.Add(_portComboBox);
+            configPanel.Controls.Add(_refreshButton);
+            configPanel.Controls.Add(baudLabel);
+            configPanel.Controls.Add(_baudComboBox);
+            configPanel.Controls.Add(parityLabel);
+            configPanel.Controls.Add(_parityComboBox);
+            configPanel.Controls.Add(dataBitsLabel);
+            configPanel.Controls.Add(_dataBitsComboBox);
+            configPanel.Controls.Add(stopBitsLabel);
+            configPanel.Controls.Add(_stopBitsComboBox);
+            configPanel.Controls.Add(_dtrCheckBox);
+            configPanel.Controls.Add(_rtsCheckBox);
+            configPanel.Controls.Add(_connectButton);
+
+            var txGroup = new GroupBox
+            {
+                Text = "Transmit",
+                Width = 900,
+                Height = 180,
+                Location = new System.Drawing.Point(20, 220)
+            };
+
+            var modePanel = new Panel { Location = new System.Drawing.Point(20, 25), Width = 320, Height = 30 };
+            _textModeRadio = new RadioButton { Text = "Text", Checked = true, AutoSize = true, Location = new System.Drawing.Point(0, 0) };
+            _hexModeRadio = new RadioButton { Text = "Hex", AutoSize = true, Location = new System.Drawing.Point(100, 0) };
+            modePanel.Controls.Add(_textModeRadio);
+            modePanel.Controls.Add(_hexModeRadio);
+
+            _commandTextBox = new TextBox
+            {
+                Multiline = true,
+                ScrollBars = ScrollBars.Vertical,
+                Width = 730,
+                Height = 80,
+                Location = new System.Drawing.Point(20, 60),
+                Font = new System.Drawing.Font("Consolas", 10F)
+            };
+            _commandTextBox.Text = "Example: READ STATUS or 50 00 00 00";
+
+            _sendButton = new Button { Text = "Send", Width = 110, Location = new System.Drawing.Point(760, 60) };
+            _sendButton.Click += SendButton_Click;
+
+            _exampleCommandButton = new Button { Text = "Load Example", Width = 110, Location = new System.Drawing.Point(760, 100) };
+            _exampleCommandButton.Click += (_, _) => _commandTextBox.Text = "50 00 00 00 00 00";
+
+            _clearButton = new Button { Text = "Clear Log", Width = 110, Location = new System.Drawing.Point(760, 140) };
+            _clearButton.Click += (_, _) => _logBox.Clear();
+
+            txGroup.Controls.Add(modePanel);
+            txGroup.Controls.Add(_commandTextBox);
+            txGroup.Controls.Add(_sendButton);
+            txGroup.Controls.Add(_exampleCommandButton);
+            txGroup.Controls.Add(_clearButton);
+
+            var logGroup = new GroupBox
+            {
+                Text = "Communication Log",
+                Width = 900,
+                Height = 300,
+                Location = new System.Drawing.Point(20, 410)
+            };
+
+            _logBox = new RichTextBox
+            {
+                ReadOnly = true,
+                Width = 860,
+                Height = 250,
+                Location = new System.Drawing.Point(20, 30),
+                Font = new System.Drawing.Font("Consolas", 10F),
+                BackColor = System.Drawing.Color.Black,
+                ForeColor = System.Drawing.Color.White
+            };
+            logGroup.Controls.Add(_logBox);
+
+            Controls.Add(_statusLabel);
+            Controls.Add(configPanel);
+            Controls.Add(txGroup);
+            Controls.Add(logGroup);
+
+            LoadSerialPorts();
+            UpdateConnectionState();
+        }
+
+        private void LoadSerialPorts()
+        {
+            var ports = SerialPort.GetPortNames();
+            _portComboBox.Items.Clear();
+            foreach (var port in ports)
+            {
+                _portComboBox.Items.Add(port);
+            }
+
+            if (_portComboBox.Items.Count > 0)
+            {
+                _portComboBox.SelectedIndex = 0;
+            }
+            else
+            {
+                _portComboBox.Text = "No ports found";
+            }
+        }
+
+        private void ConnectButton_Click(object sender, EventArgs e)
+        {
+            try
+            {
+                if (_serialPort.IsOpen)
+                {
+                    _serialPort.Close();
+                    AppendLog("Disconnected from PLC.");
+                    UpdateConnectionState();
+                    _connectButton.Text = "Connect";
+                    return;
+                }
+
+                _serialPort.PortName = _portComboBox.Text;
+                _serialPort.BaudRate = Convert.ToInt32(_baudComboBox.Text);
+                _serialPort.Parity = (Parity)Enum.Parse(typeof(Parity), _parityComboBox.Text, true);
+                _serialPort.DataBits = Convert.ToInt32(_dataBitsComboBox.Text);
+                _serialPort.StopBits = (StopBits)Enum.Parse(typeof(StopBits), _stopBitsComboBox.Text, true);
+                _serialPort.DtrEnable = _dtrCheckBox.Checked;
+                _serialPort.RtsEnable = _rtsCheckBox.Checked;
+                _serialPort.ReadTimeout = 1500;
+                _serialPort.WriteTimeout = 1500;
+
+                _serialPort.Open();
+                AppendLog($"Connected to {_serialPort.PortName} at {_serialPort.BaudRate} bps.");
+                UpdateConnectionState();
+                _connectButton.Text = "Disconnect";
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Failed to connect: {ex.Message}", "Serial Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AppendLog($"Connection error: {ex.Message}");
+            }
+        }
+
+        private void SendButton_Click(object sender, EventArgs e)
+        {
+            if (!_serialPort.IsOpen)
+            {
+                MessageBox.Show(this, "Connect to the PLC before sending data.", "Not Connected", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+
+            try
+            {
+                var payload = _commandTextBox.Text.Trim();
+                if (string.IsNullOrWhiteSpace(payload))
+                {
+                    MessageBox.Show(this, "Enter a command before sending.", "Empty Command", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                if (_hexModeRadio.Checked)
+                {
+                    var bytes = HexUtilities.ParseHex(payload);
+                    _serialPort.Write(bytes, 0, bytes.Length);
+                    AppendLog($"TX[HEX]: {HexUtilities.FormatHex(bytes)}");
+                }
+                else
+                {
+                    var buffer = Encoding.ASCII.GetBytes(payload + "\r\n");
+                    _serialPort.Write(buffer, 0, buffer.Length);
+                    AppendLog($"TX[TEXT]: {payload}");
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Send failed: {ex.Message}", "Serial Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                AppendLog($"Send error: {ex.Message}");
+            }
+        }
+
+        private void SerialPort_DataReceived(object sender, SerialDataReceivedEventArgs e)
+        {
+            try
+            {
+                if (!_serialPort.IsOpen)
+                    return;
+
+                var bytesToRead = _serialPort.BytesToRead;
+                if (bytesToRead <= 0)
+                    return;
+
+                var buffer = new byte[bytesToRead];
+                _serialPort.Read(buffer, 0, bytesToRead);
+
+                var receivedText = Encoding.ASCII.GetString(buffer);
+                var receivedHex = HexUtilities.FormatHex(buffer);
+
+                AppendLog($"RX[HEX]: {receivedHex}");
+                AppendLog($"RX[TEXT]: {receivedText}");
+            }
+            catch (Exception ex)
+            {
+                AppendLog($"Receive error: {ex.Message}");
+            }
+        }
+
+        private void AppendLog(string message)
+        {
+            if (_logBox.InvokeRequired)
+            {
+                _logBox.BeginInvoke(new Action<string>(AppendLog), message);
+                return;
+            }
+
+            _logBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
+            _logBox.ScrollToCaret();
+        }
+
+        private void UpdateConnectionState()
+        {
+            if (_serialPort.IsOpen)
+            {
+                _statusLabel.Text = "Connected";
+                _statusLabel.ForeColor = System.Drawing.Color.DarkGreen;
+            }
+            else
+            {
+                _statusLabel.Text = "Disconnected";
+                _statusLabel.ForeColor = System.Drawing.Color.DarkRed;
+            }
+        }
+    }
+
+    public static class HexUtilities
+    {
+        public static byte[] ParseHex(string value)
+        {
+            var cleaned = value.Replace(" ", "").Replace("\t", "").Replace("\r", "").Replace("\n", "");
+            if (cleaned.Length % 2 != 0)
+            {
+                throw new ArgumentException("Hex string must have an even number of characters.");
+            }
+
+            var bytes = new byte[cleaned.Length / 2];
+            for (var i = 0; i < cleaned.Length; i += 2)
+            {
+                bytes[i / 2] = Convert.ToByte(cleaned.Substring(i, 2), 16);
+            }
+
+            return bytes;
+        }
+
+        public static string FormatHex(byte[] data)
+        {
+            var sb = new StringBuilder();
+            foreach (var b in data)
+            {
+                sb.Append(b.ToString("X2"));
+                sb.Append(' ');
+            }
+
+            return sb.ToString().Trim();
+        }
+    }
+}
